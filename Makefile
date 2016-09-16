@@ -14,7 +14,7 @@ SCHEDULER_INCLUDE_DIR=/Users/brian/work/scheduler
 
 #all: async_sleep_test async_semaphore_test async_future_test scheduler_test scheduler_context_test
 
-test: test.cc
+test: test.cc bhttp.hpp
 	$(CC) $(CFLAGS) -I $(INCLUDE_DIRS) -I $(BOOST_INCLUDE_DIR) -L /usr/local/lib $(LIBS) test.cc -o test
 
 test2: test2.cc
