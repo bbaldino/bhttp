@@ -1,6 +1,15 @@
+var https = require('https');
+var fs = require('fs');
 var express = require('express');
 var bodyParser = require('body-parser');
 var app = express();
+
+var options = {
+  key: fs.readFileSync('./localhost.key'),
+  cert: fs.readFileSync('./localhost.crt'),
+  requestCert: false,
+  rejectUnauthorized: false
+};
 
 app.use(bodyParser.text());
 
@@ -9,7 +18,7 @@ app.get('/', function(req, res) {
   console.log("Got a GET request");
   var sleepTime = Math.floor((Math.random() * 1000) + 1);
   setTimeout(function(res) {
-    res.send("" + getNum++);
+    res.send("get response " + getNum++);
   }.bind(null, res), sleepTime);
 });
 
@@ -18,7 +27,7 @@ app.post('/', function(req, res) {
   console.log("Got a POST request");
   var sleepTime = Math.floor((Math.random() * 1000) + 1);
   setTimeout(function(res) {
-    res.send("" + postNum++);
+    res.send("post response " + postNum++);
   }.bind(null, res), sleepTime);
 });
 
@@ -45,18 +54,13 @@ app.post('/', function(req, res) {
 });
 */
 
-var firstRes;
-app.post('/slow', function(req, res) {
-  firstRes = res;
-  //var sleepTime = 5000;
-  //setTimeout(function(res, num) {
-  //  res.send("slow");
-  //}.bind(null, res), sleepTime);
-});
-
-app.post('/fast', function(req, res) {
-  res.send("fast");
-  //firstRes.send("slow");
+var longPollNum = 0;
+app.get('/longpoll', function(req, res) {
+  console.log("Got a longpoll request");
+  var sleepTime = 5000;
+  setTimeout(function(res, num) {
+    res.send("longpoll response " + longPollNum++);
+  }.bind(null, res), sleepTime);
 });
 
 app.post('/echo', function(req, res) {
@@ -64,7 +68,8 @@ app.post('/echo', function(req, res) {
 });
 
 
-var server = app.listen(8070, function() {
+//var server = app.listen(8070, function() {
+var server = https.createServer(options, app).listen(8070, function() {
   var host = server.address().address;
   var port = server.address().port;
 

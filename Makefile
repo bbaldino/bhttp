@@ -4,11 +4,13 @@ CFLAGS=-std=c++1y -g
 BOOST_INCLUDE_DIR=/usr/local/include/
 BOOST_LIB_BASE_PATH=/usr/local/lib
 #LIB_DIRS=-L $(BOOST_LIB_BASE_PATH)/context/build/darwin-4.2.1/debug/link-static/ -L $(BOOST_LIB_BASE_PATH)/coroutine/build/darwin-4.2.1/debug/link-static/ -L $(BOOST_LIB_BASE_PATH)/system/build/darwin-4.2.1/debug/link-static/ -L $(BOOST_LIB_BASE_PATH)/thread/build/darwin-4.2.1/debug/link-static/threading-multi -L $(BOOST_LIB_BASE_PATH)/chrono/build/darwin-4.2.1/debug/link-static/
-LIBS=-lboost_system -lboost_thread -lboost_context -lboost_coroutine -lboost_chrono
+LIBS=-lssl -lcrypto -lboost_system -lboost_thread -lboost_context -lboost_coroutine -lboost_chrono
 
 INCLUDE_DIRS=include/Beast/include 
 #TODO: add scheduler as a submodule
 SCHEDULER_INCLUDE_DIR=/Users/brian/work/scheduler
+OPENSSL_DIR=/Users/brian/Downloads/openssl-1.0.2f
+OPENSSL_INCLUDE=$(OPENSSL_DIR)/include
 
 #GTEST_ROOT=./googletest/googletest
 #GMOCK_ROOT=./googletest/googlemock
@@ -16,7 +18,7 @@ SCHEDULER_INCLUDE_DIR=/Users/brian/work/scheduler
 #all: async_sleep_test async_semaphore_test async_future_test scheduler_test scheduler_context_test
 
 test: test.cc bhttp.hpp
-	$(CC) $(CFLAGS) -I $(INCLUDE_DIRS) -I $(BOOST_INCLUDE_DIR) -I $(SCHEDULER_INCLUDE_DIR) -L /usr/local/lib $(LIBS) test.cc -o test
+	$(CC) $(CFLAGS) -I $(INCLUDE_DIRS) -I $(BOOST_INCLUDE_DIR) -I $(SCHEDULER_INCLUDE_DIR) -I $(OPENSSL_INCLUDE) -L /usr/local/lib -L $(OPENSSL_DIR) $(LIBS) test.cc -o test
 
 test2: test2.cc
 	$(CC) $(CFLAGS) -I $(INCLUDE_DIRS) -I $(BOOST_INCLUDE_DIR) -L /usr/local/lib $(LIBS) test2.cc -o test2
