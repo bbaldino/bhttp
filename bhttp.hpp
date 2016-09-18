@@ -6,36 +6,53 @@
 #include <future>
 #include <string>
 
+#include "scheduler.hpp"
+#include "scheduler_context.hpp"
+#include "async_semaphore.hpp"
+
 typedef beast::http::response_v1<beast::http::streambuf_body> Response;
 template<typename T>
 using Request = beast::http::request_v1<T>;
 typedef boost::system::error_code error_code_t;
 typedef boost::asio::ip::tcp::socket socket_t;
 
-// Step 2: library that can do post and get requests, give responses.
+// Step 3: library that can do post and get requests, give responses.
 //  can support multiple sockets.  single thread still handles all requests
 //  and will not block if a socket is unavailable at the time of the request.
+//  coroutines make the logic here a lot simpler
+
+//TODO: wondering about the use case here though.  the issue here is that all
+// calls must be made from within a coroutine spawned by the same scheduler_context
+// that's being used here.  so, first of all, this class doesn't need the scheduler
+// at all, it just needs the io_service from it.  once we have that, then the use
+// case becomes a bit better maybe?  caller just needs to make sure all calls into
+// this are through that scheduler_context's thread...so either from a coro spawned
+// by it or done via a post (which scheduler already gives futures for).  OR...it
+// does get a scheduler, and the public apis post everything onto it.  how would
+// we make that work with coroutines?  this class would have to have its own coro
+// run loop?
+// could have support for coros and futures.  if coro, lib would use the io_service
+// given, otherwise it would spin up its own io service and thread?  if given an io
+// service, it could do either coros or futures. if it spins up its own, obviously
+// only future-type handlers would make sense
 class BHttp {
 public:
   BHttp(
+      Scheduler& master_scheduler,
       const std::string&& hostname,
       const std::string&& port) :
+      scheduler_(master_scheduler),
       hostname_(std::move(hostname)),
       port_(std::move(port)),
-      work_(ios_),
-      resolver_(ios_),
-      socket_timer_(ios_),
-      context_(0),
-      thread_([this]() { ios_.run(); }) {
-    for (auto i = 0; i < 5; ++i) {
-      sockets_.push_back(std::move(std::make_shared<socket_t>(ios_)));
+      resolver_(scheduler_.master_scheduler_.io_service_),
+      socket_sem_(scheduler_.master_scheduler_.io_service_) {
+    for (auto i = 0; i < 100; ++i) {
+      sockets_.push_back(std::move(std::make_shared<socket_t>(scheduler_.master_scheduler_.io_service_)));
     }
   }
 
   ~BHttp() {
     std::cout << "dtor" << std::endl;
-    work_ = boost::none;
-    thread_.join();
   }
 
   void connect() {
@@ -47,123 +64,79 @@ public:
     }
   }
 
-  std::future<Response> doGet(const std::string& url) {
-    auto req = std::make_shared<beast::http::request_v1<beast::http::empty_body>>();
-    req->method = "GET";
-    req->version = 11;
-    req->url = url;
-    req->headers.replace("Host", hostname_ + ":" + port_);
-    beast::http::prepare(*req);
+  Response doGet(const std::string& url, boost::asio::yield_context context) {
+    Request<beast::http::empty_body> req;
+    req.method = "GET";
+    req.version = 11;
+    req.url = url;
+    req.headers.replace("Host", hostname_ + ":" + port_);
+    beast::http::prepare(req);
 
-    auto response_promise = std::make_shared<std::promise<Response>>();
-    getAvailableSocket([req, response_promise, this](const std::shared_ptr<socket_t>& socket) {
-      handleReqResp(socket, *req, response_promise);
-    });
-    return response_promise->get_future();
+    auto socket = getAvailableSocket(context);
+    return handleReqResp(socket, req, context);
   }
 
-  std::future<Response> doPost(const std::string& url, const std::string& body) {
-    auto req = std::make_shared<beast::http::request_v1<beast::http::empty_body>>();
-    req->method = "POST";
-    req->version = 11;
-    req->url = url;
-    req->headers.replace("Host", hostname_ + ":" + port_);
-    beast::http::prepare(*req);
+  Response doPost(const std::string& url, boost::asio::yield_context context) {
+    Request<beast::http::empty_body> req;
+    req.method = "POST";
+    req.version = 11;
+    req.url = url;
+    req.headers.replace("Host", hostname_ + ":" + port_);
+    beast::http::prepare(req);
 
-    auto response_promise = std::make_shared<std::promise<Response>>();
-    getAvailableSocket([req, response_promise, this](const std::shared_ptr<socket_t>& socket) {
-      handleReqResp(socket, *req, response_promise);
-    });
-    return response_promise->get_future();
+    auto socket = getAvailableSocket(context);
+    return handleReqResp(socket, req, context);
   }
-    
+
 //protected:
   const std::string hostname_;
   const std::string port_;
-  boost::asio::io_service ios_;
-  boost::optional<boost::asio::io_service::work> work_;
+  SchedulerContext scheduler_;
   boost::asio::ip::tcp::resolver resolver_;
-  boost::thread thread_;
   // Accessed only from thread_
   std::deque<std::shared_ptr<socket_t>> sockets_;
-  boost::asio::deadline_timer socket_timer_;
-  int context_;
+  AsyncSemaphore socket_sem_;
 
-  // Because there may not be a socket available and we can't block waiting for one,
-  //  this takes a handler to be invoked once a socket is available.
-  template<typename OnSocketHandler>
-  void getAvailableSocket(const OnSocketHandler& onSocket) {
-    ios_.post([onSocket, this]() {
-      auto myContext = context_++;
-      std::cout << boost::this_thread::get_id() << " " << myContext << ": Getting socket" << std::endl;
-      assert(boost::this_thread::get_id() == thread_.get_id());
-      if (!sockets_.empty()) {
-        std::cout << boost::this_thread::get_id() << " " << myContext << ": Socket already available" << std::endl;
-        auto socket = sockets_.back();
-        sockets_.pop_back();
-        onSocket(socket);
-      } else {
-        std::cout << boost::this_thread::get_id() << " " << myContext << ": Waiting for available socket" << std::endl;
-        socket_timer_.async_wait([onSocket, this, myContext](const error_code_t& ec) {
-          std::cout << boost::this_thread::get_id() << " " << myContext << ": Socket now available" << std::endl;
-          if (ec != boost::system::errc::operation_canceled) {
-            std::cout << "Error waiting for socket: " << ec.message();
-          } else {
-            assert(!sockets_.empty());
-            auto socket = sockets_.back();
-            sockets_.pop_back();
-            onSocket(socket);
-          }
-        });
-      }
-    });
+  void assertInIoServiceThread() {
+    assert(boost::this_thread::get_id() == scheduler_.master_scheduler_.thread_.get_id());
   }
 
-  // Must be called from the io service thread
+  std::shared_ptr<socket_t> getAvailableSocket(boost::asio::yield_context context) {
+    assertInIoServiceThread();
+    if (sockets_.empty()) {
+      socket_sem_.Wait(context);
+    }
+    assert(!sockets_.empty());
+    auto socket = sockets_.back();
+    sockets_.pop_back();
+    return socket;
+  }
+
   void returnSocket(const std::shared_ptr<socket_t>& socket) {
-    assert(boost::this_thread::get_id() == thread_.get_id());
-    std::cout << boost::this_thread::get_id() << ": returning socket to pool" << std::endl;
+    assertInIoServiceThread();
     sockets_.push_back(socket);
-    socket_timer_.cancel_one();
+    socket_sem_.Raise();
   }
 
   template<typename T>
-  void handleReqResp(
-      std::shared_ptr<socket_t> socket,
-      Request<T> req,
-      std::shared_ptr<std::promise<Response>> response_promise) {
-    std::cout << "writing req" << std::endl;
-    beast::http::async_write(
-      *socket, 
-      req,
-      [response_promise, socket, this](const error_code_t& ec) {
-        std::cout << "wrote req" << std::endl;
-        if (ec) {
-          std::cout << "Error making request: " << ec.message() << std::endl;
-          response_promise->set_value({});
-          returnSocket(socket);
-          return;
-        }
-        auto sb = std::make_shared<beast::streambuf>();
-        auto resp = std::make_shared<Response>();
-        std::cout << "reading response" << std::endl;
-        beast::http::async_read(
-          *socket,
-          *sb,
-          *resp,
-          [response_promise, resp, sb, socket, this](const error_code_t& ec) {
-            std::cout << "got resp" << std::endl;
-            if (ec) {
-              response_promise->set_value({});
-              returnSocket(socket);
-              return;
-            }
-            std::cout << "setting response in future" << std::endl;
-            response_promise->set_value(*resp);
-            returnSocket(socket);
-          }
-        );
-      }
-    );
+  Response handleReqResp(std::shared_ptr<socket_t> socket, Request<T> req, boost::asio::yield_context context) {
+    assertInIoServiceThread();
+    error_code_t ec;
+    beast::http::async_write(*socket, req, context[ec]);
+    if (ec) {
+      std::cout << "Error writing request";
+      returnSocket(socket);
+      return {};
+    }
+    beast::streambuf sb;
+    Response resp;
+    beast::http::async_read(*socket, sb, resp, context[ec]);
+    if (ec) {
+      std::cout << "Error reading response";
+      returnSocket(socket);
+      return {};
+    }
+    returnSocket(socket);
+    return resp;
   }
 };

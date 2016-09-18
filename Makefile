@@ -7,6 +7,7 @@ BOOST_LIB_BASE_PATH=/usr/local/lib
 LIBS=-lboost_system -lboost_thread -lboost_context -lboost_coroutine -lboost_chrono
 
 INCLUDE_DIRS=include/Beast/include 
+#TODO: add scheduler as a submodule
 SCHEDULER_INCLUDE_DIR=/Users/brian/work/scheduler
 
 #GTEST_ROOT=./googletest/googletest
@@ -15,7 +16,7 @@ SCHEDULER_INCLUDE_DIR=/Users/brian/work/scheduler
 #all: async_sleep_test async_semaphore_test async_future_test scheduler_test scheduler_context_test
 
 test: test.cc bhttp.hpp
-	$(CC) $(CFLAGS) -I $(INCLUDE_DIRS) -I $(BOOST_INCLUDE_DIR) -L /usr/local/lib $(LIBS) test.cc -o test
+	$(CC) $(CFLAGS) -I $(INCLUDE_DIRS) -I $(BOOST_INCLUDE_DIR) -I $(SCHEDULER_INCLUDE_DIR) -L /usr/local/lib $(LIBS) test.cc -o test
 
 test2: test2.cc
 	$(CC) $(CFLAGS) -I $(INCLUDE_DIRS) -I $(BOOST_INCLUDE_DIR) -L /usr/local/lib $(LIBS) test2.cc -o test2
