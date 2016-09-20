@@ -31,7 +31,9 @@ boost::condition_variable cond;
 Scheduler master_scheduler;
 
 int main(int argc, char* argv[]) {
-  BHttp http(master_scheduler, "127.0.0.1", "8070");
+  //auto sslContext = BHttp::createSslContext("");
+  auto sslContext = BHttp::createDummySslContext(); //BHttp::createSslContext("");
+  BHttp http(master_scheduler, "localhost", "8070", sslContext, true);
   http.connect();
   std::cout << http.doGet("/").get() << std::endl;
   std::cout << http.doGet("/").get() << std::endl;

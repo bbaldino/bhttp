@@ -14,41 +14,32 @@ typedef beast::http::response_v1<beast::http::streambuf_body> Response;
 template<typename T>
 using Request = beast::http::request_v1<T>;
 typedef boost::system::error_code error_code_t;
-#define HTTPS
-#ifdef HTTPS
 typedef boost::asio::ssl::stream<boost::asio::ip::tcp::socket> socket_t;
-#else
-typedef boost::asio::ip::tcp::socket socket_t;
-#endif
 
-// Step 4: library that can do post and get requests, give responses.
+// Step 5: library that can do post and get requests, give responses.
 //  can support multiple sockets.  single thread still handles all requests
 //  and will not block if a socket is unavailable at the time of the request.
 //  coroutines make the logic here a lot simpler.  the api here is also changed
 //  so the caller is not required to be using a coroutine and doGet and doPost will
-//  return a future
+//  return a future.  now add the ability to specify whether or not to use ssl for
+//  a connection.
 class BHttp {
 public:
   BHttp(
       Scheduler& master_scheduler,
       const std::string& hostname,
-      const std::string& port) :
+      const std::string& port,
+      boost::asio::ssl::context& context,
+      bool sslEnabled) :
       scheduler_(master_scheduler),
       hostname_(hostname),
       port_(port),
-      resolver_(scheduler_.GetIoService()) {
+      resolver_(scheduler_.GetIoService()),
+      sslEnabled_(sslEnabled) {
     socket_sem_ = scheduler_.CreateSemaphore();
-#ifdef HTTPS
-    boost::asio::ssl::context ctx(boost::asio::ssl::context::sslv23);
-    //ctx.load_verify_file("/Users/brian/Downloads/boost_1_61_0/libs/asio/example/cpp03/ssl/ca.pem");
     for (auto i = 0; i < 1; ++i) {
-      sockets_.push_back(std::move(std::make_shared<socket_t>(scheduler_.GetIoService(), ctx)));
+      sockets_.push_back(std::make_shared<socket_t>(scheduler_.GetIoService(), context));
     }
-#else
-    for (auto i = 0; i < 1; ++i) {
-      sockets_.push_back(std::move(std::make_shared<socket_t>(scheduler_.GetIoService())));
-    }
-#endif
   }
 
   ~BHttp() {
@@ -59,28 +50,51 @@ public:
 
   static boost::asio::ssl::context createSslContext(const std::string& pemFilePath) {
     boost::asio::ssl::context ctx(boost::asio::ssl::context::sslv23);
-    ctx.load_verify_file(pemFilePath);
+    if (!pemFilePath.empty()) {
+      ctx.load_verify_file(pemFilePath);
+    }
+    ctx.set_verify_mode(boost::asio::ssl::verify_peer);
+    return ctx;
+  }
+
+  static boost::asio::ssl::context createDummySslContext() {
+    boost::asio::ssl::context ctx(boost::asio::ssl::context::sslv23);
+    ctx.set_verify_mode(boost::asio::ssl::verify_none);
     return ctx;
   }
 
   // Synchronous.  Must be called before any calls to make requests.
-  void connect() {
+  bool connect() {
     boost::asio::ip::tcp::resolver::query q{boost::asio::ip::tcp::v4(), hostname_, port_};
-    boost::asio::ip::tcp::resolver::iterator iter = resolver_.resolve(q);
+    error_code_t ec;
+    boost::asio::ip::tcp::resolver::iterator iter = resolver_.resolve(q, ec);
+    if (ec) {
+      std::cout << "Error resolving host: " << ec.message();
+      return false;
+    }
     std::cout << "resolved to " << iter->endpoint() << std::endl;
     for (auto& s : sockets_) {
-#ifdef HTTPS
-      s->set_verify_mode(boost::asio::ssl::verify_peer);
-      s->set_verify_callback([](bool preverified, boost::asio::ssl::verify_context& ctx) {
-        std::cout << "verified" << std::endl;
-        return true;
-      });
-      s->lowest_layer().connect(*iter);
-      s->handshake(boost::asio::ssl::stream_base::client);
-#else
-      s->connect(*iter);
-#endif
+      if (sslEnabled_) {
+        std::cout << "Enabling https" << std::endl;
+        s->set_verify_callback([](bool preverified, boost::asio::ssl::verify_context& ctx) {
+          std::cout << "verified" << std::endl;
+          return true;
+        });
+      }
+      s->lowest_layer().connect(*iter, ec);
+      if (ec) {
+        std::cout << "failed to connect" << std::endl;
+        return false;
+      }
+      if (sslEnabled_) {
+        s->handshake(boost::asio::ssl::stream_base::client, ec);
+        if (ec) {
+          std::cout << "failed doing ssl handleshake" << std::endl;
+          return false;
+        }
+      }
     }
+    return true;
   }
 
   std::future<Response> doGet(const std::string& url) {
@@ -120,6 +134,7 @@ public:
   const std::string port_;
   SchedulerContext scheduler_;
   boost::asio::ip::tcp::resolver resolver_;
+  bool sslEnabled_;
   // Accessed only from inside the io service context
   std::deque<std::shared_ptr<socket_t>> sockets_;
   std::shared_ptr<AsyncSemaphore> socket_sem_;
@@ -146,12 +161,20 @@ public:
     scheduler_.VerifyInIoServiceThread();
     error_code_t ec;
     Response resp;
-    beast::http::async_write(*socket, req, context[ec]);
+    if (sslEnabled_) {
+      beast::http::async_write(*socket, req, context[ec]);
+    } else {
+      beast::http::async_write(socket->next_layer(), req, context[ec]);
+    }
     if (ec) {
       std::cout << "Error writing request";
     } else {
       beast::streambuf sb;
-      beast::http::async_read(*socket, sb, resp, context[ec]);
+      if (sslEnabled_) {
+        beast::http::async_read(*socket, sb, resp, context[ec]);
+      } else {
+        beast::http::async_read(socket->next_layer(), sb, resp, context[ec]);
+      }
       if (ec) {
         std::cout << "Error reading response";
       }

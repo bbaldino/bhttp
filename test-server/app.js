@@ -68,10 +68,22 @@ app.post('/echo', function(req, res) {
 });
 
 
-//var server = app.listen(8070, function() {
-var server = https.createServer(options, app).listen(8070, function() {
-  var host = server.address().address;
-  var port = server.address().port;
+var useSsl = true;
+var server;
 
-  console.log("Server listening at http://%s:%s", host, port)
-});
+if (useSsl) {
+  server = https.createServer(options, app).listen(8070, function() {
+    var host = server.address().address;
+    var port = server.address().port;
+
+    console.log("Server listening at https://%s:%s", host, port)
+  });
+} else {
+  server = app.listen(8070, function() {
+    var host = server.address().address;
+    var port = server.address().port;
+
+    console.log("Server listening at http://%s:%s", host, port)
+  });
+}
+
