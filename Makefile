@@ -7,8 +7,7 @@ BOOST_LIB_BASE_PATH=/usr/local/lib
 LIBS=-lssl -lcrypto -lboost_system -lboost_thread -lboost_context -lboost_coroutine -lboost_chrono
 
 INCLUDE_DIRS=include/Beast/include 
-#TODO: add scheduler as a submodule
-SCHEDULER_INCLUDE_DIR=/Users/brian/work/scheduler
+SCHEDULER_INCLUDE_DIR=include/AsyncScheduler/
 OPENSSL_DIR=/Users/brian/Downloads/openssl-1.0.2f
 OPENSSL_INCLUDE=$(OPENSSL_DIR)/include
 

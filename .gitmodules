@@ -1,3 +1,6 @@
 [submodule "include/Beast"]
 	path = include/Beast
 	url = https://github.com/vinniefalco/Beast.git
+[submodule "include/AsyncScheduler"]
+	path = include/AsyncScheduler
+	url = https://github.com/bbaldino/AsyncScheduler.git
